@@ -1,0 +1,131 @@
+---
+title: "Machine learning project"
+author: "M Clarkson"
+date: "August 1, 2016"
+output: html_document
+---
+# Data
+
+This dataset represents measurements from six individuals performing 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different ways: 
+- exactly according to the specification (Class A)
+- throwing the elbows to the front (Class B)
+- lifting the dumbbell only halfway (Class C)
+- lowering the dumbbell only halfway (Class D)
+- throwing the hips to the front (Class E)
+
+Four sensors were used (arm, forearm, dumbbell, and belt on waist) 
+
+Data from http://groupware.les.inf.puc-rio.br/har
+
+Reference for dataset: Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+# Project summary
+
+The purpose of this project is to build a model using the sensor data that will predict the type of movement (the "classe" variable)
+
+
+# Project steps
+
+### 1. Load data for training
+
+```{r, message=FALSE}
+library(caret)
+projectData <- read.csv("pml-training.csv", na.strings=c("", "NA"))
+```
+
+### 2. Explore dataset and make clean data
+
+This dataset has 19622 observations of 160 variables, but a large number are NA. Counting NAs for each variable shows that there are either 19216 NAs or no NAs, so I removed all variables with NAs.
+
+Of the 60 remaining variables, I removed the first seven for row number, timestanps, window indicators, and user names. This left 53 variables. The first 52 are measures from the sensor data (type int or num). In column 53 is the outcome variable ("classe", the category of movement). 
+
+```{r }
+measures <- colnames(projectData)
+NA_Count <-sapply(measures, function(x) sum(length(which(is.na(projectData[x])))))
+#NA_Count
+measuresToExplore <- measures[which(NA_Count == 0)]
+measuresToExplore <- measuresToExplore[-c(1:7)]
+projectDataClean <- projectData[ , measuresToExplore]
+```
+
+### 3. Partition data to reserve part for cross validation testing
+
+I am using 75% of the data for training, 25% for testing. 
+
+```{r}
+trainIndex <- createDataPartition(projectDataClean$classe, p= 0.75, list = FALSE)
+trainData <- projectDataClean[trainIndex,]
+testData <- projectDataClean[-trainIndex,]
+```
+
+Two quick plots to look at some data, with color by category of movement:
+
+```{r}
+plot(trainData$roll_belt, trainData$pitch_belt, col=trainData$classe, cex=0.6, xlab="roll_belt", ylab="pitch_belt")
+plot(trainData$pitch_belt, trainData$yaw_belt, col=trainData$classe, cex=0.6, xlab="pitch_belt", ylab="yaw_belt")
+```
+
+
+### 4. Reduce number of variables
+
+There are 52 predictor variables, and many of these are likely to be unnecessary in a model. 
+
+My preliminary work showed that there are 18 variables correlated at the 0.8 level, 13 at the 0.85 level, and 11 at the 0.9 level. Later I decided that instead of manually removing some of these I would use principle component analysis to reduce the number of predictor variables.
+
+I created a PCA transform using the training dataset. It needed 25 components to account for 95% of variance. I then applied this to the training data to produce a new dataframe. This same transform will need to be used on the test data.
+
+```{r}
+preProcessingTransform <- preProcess(trainData, method = "pca", thresh = 0.95)
+trainDataPreProcessed <- predict(preProcessingTransform, trainData)
+```
+
+Look at first two principal components, colored by category of movement:
+
+```{r}
+plot(trainDataPreProcessed[ ,"PC1"], trainDataPreProcessed[, "PC2"], xlab="PC1", ylab="PC2", cex=0.3, col=trainDataPreProcessed$classe)
+```
+
+
+### 5. Create model
+
+I choose to use a random forest model because it is highly accurate and will work for outcome variables with more than two categories.
+
+```{r, eval=FALSE}
+modelRF <- train(classe ~ ., data=trainDataPreProcessed, method="rf")
+```
+
+Based on the training data, the model was able to predict about 98% correctly. Here is the confusion matrix provided:
+
+`.....A    B    C    D    E class.error`       
+`A 4156    9    9    8    3  0.00692951`       
+`B   45 2773   28    0    2  0.02633427`       
+`C    3   34 2499   26    5  0.02649007`       
+`D    4    1  105 2296    6  0.04809287`       
+`E    1   14   21   15 2655  0.01884701`      
+
+### 6. Cross-validatioin: Pre-process test data and make predictions
+
+```{r eval=FALSE}
+testDataPreProcessed <- predict(preProcessingTransform, testData)
+predictionsTestData <- predict(modelRF, testDataPreProcessed)
+confusionMatrix(data = predictionsTestData, reference = testData$classe)
+```
+
+
+Very good results on test data, with about 98% accuracy.
+
+`Accuracy : 0.9796 `            
+`95% CI : (0.9753, 0.9834)`   
+
+Confusion matrix, with row = reference, column = prediction
+
+`.....A    B    C    D    E`     
+`A 1385   13    3    1    0`     
+`B    1  926    6    0    1`     
+`C    5    9  826   26    3`     
+`D    2    0   18  776    6`     
+`E    2    1    2    1  891`     
+
+# Conclusion
+
+Using PCA followed by a random forest model I was able to achieve accuracy of about 98%. It did take quite a while for the model to calculate (about 20 minutes on a Macbook Pro, 2.5 GHz processor) so it would be difficult to use this approach to optimize models.
